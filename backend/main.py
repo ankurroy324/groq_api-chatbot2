@@ -115,6 +115,9 @@ class ChatRequest(BaseModel):
 # ----------------------------------------------------------------------------
 @app.get("/")
 async def root():
+    public_index = os.path.join(os.path.dirname(__file__), "..", "public", "index.html")
+    if os.path.exists(public_index):
+        return FileResponse(public_index)
     dist_index = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "index.html")
     if os.path.exists(dist_index):
         return FileResponse(dist_index)
