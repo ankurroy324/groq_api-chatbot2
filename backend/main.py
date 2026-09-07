@@ -23,7 +23,7 @@ from typing import Literal
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel, field_validator
 from groq import Groq
 
@@ -113,6 +113,14 @@ class ChatRequest(BaseModel):
 # Handy for confirming the server is alive, and required by most hosting
 # platforms (Render, Railway, etc.) to know your app is up.
 # ----------------------------------------------------------------------------
+@app.get("/")
+async def root():
+    dist_index = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "index.html")
+    if os.path.exists(dist_index):
+        return FileResponse(dist_index)
+    return {"status": "ok", "message": "Groq AI Chatbot API is running"}
+
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "model": MODEL}
