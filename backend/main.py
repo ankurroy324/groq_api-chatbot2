@@ -17,17 +17,13 @@
 # ============================================================================
 
 import os
-import sys
 import time
-from pathlib import Path
 from typing import Literal
 
-import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 from groq import Groq
 
@@ -39,12 +35,10 @@ load_dotenv()
 # Fail fast and loud if the API key is missing, instead of crashing later
 # mid-conversation with a confusing error.
 # ----------------------------------------------------------------------------
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 if not GROQ_API_KEY:
-    print("\n[ERROR] Missing GROQ_API_KEY.")
-    print("   1. Copy .env.example to .env")
-    print("   2. Paste your key from https://console.groq.com/keys\n")
-    sys.exit(1)
+    print("[WARNING] GROQ_API_KEY is not set. Set it as an environment variable.")
+    print("          API calls will fail until the key is provided.")
 
 # Which model to use. Groq deprecates/updates models periodically —
 # check https://console.groq.com/docs/models for the current list.
@@ -219,34 +213,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # ----------------------------------------------------------------------------
-# 8. SERVE FRONTEND (Vite React build output)
-# Mount the dist directory for static assets (JS, CSS, images), then add a
-# catch-all route so refreshing on any path still loads the React SPA.
-# ----------------------------------------------------------------------------
-FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-
-if FRONTEND_DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
-
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        """Serve index.html for any non-API route (SPA catch-all)."""
-        # Try to serve the exact file first (e.g., favicon.ico)
-        file_path = FRONTEND_DIST / full_path
-        if full_path and file_path.is_file():
-            return FileResponse(file_path)
-        # Otherwise, serve index.html for the React SPA
-        return FileResponse(FRONTEND_DIST / "index.html")
-else:
-    print(f"[WARNING] Frontend build not found at {FRONTEND_DIST}")
-    print("   Run 'npm run build' in the frontend/ folder for production mode.")
-    print("   For development, use 'npm run dev' in frontend/ with the Vite proxy.\n")
-
-
-# ----------------------------------------------------------------------------
-# 9. START SERVER
+# 8. START SERVER (local dev only)
+# On Vercel, the ASGI app is invoked directly by the Python runtime.
+# Locally, run: python main.py
 # ----------------------------------------------------------------------------
 if __name__ == "__main__":
-    print(f"\n[OK] Groq chatbot server running at http://localhost:{PORT}")
-    print(f"   Using model: {MODEL}\n")
+    import uvicorn
+    print(f"\n[OK] Groq chatbot backend running at http://localhost:{PORT}")
+    print(f"   Using model: {MODEL}")
+    print("   Frontend dev server: npm run dev (in frontend/)\n")
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
