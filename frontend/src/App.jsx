@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import './App.css';
 
 const STORAGE_KEY = 'groq-chatbot-history';
 
-/* ──────────────────────── helpers ──────────────────────── */
+/* ── helpers ── */
 
 function loadHistory() {
   try {
@@ -16,16 +17,20 @@ function loadHistory() {
 function saveHistory(conversation) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(conversation));
-  } catch {
-    /* localStorage can fail in private browsing — not critical */
-  }
+  } catch { /* silent */ }
 }
 
-/* ──────────────────────── components ──────────────────────── */
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/* ── components ── */
 
 function TypingDots() {
   return (
-    <span className="typing-dots">
+    <span className="typing-dots" aria-label="Thinking">
       <span /><span /><span />
     </span>
   );
@@ -34,19 +39,26 @@ function TypingDots() {
 function Avatar({ role }) {
   const isUser = role === 'user';
   return (
-    <div className={`avatar ${isUser ? 'avatar-user' : 'avatar-ai'}`}>
-      {isUser ? 'U' : 'AI'}
+    <div className={`avatar ${isUser ? 'avatar-user' : 'avatar-ai'}`} aria-hidden="true">
+      {isUser ? 'you' : 'ai'}
     </div>
   );
 }
 
-function MessageBubble({ role, content, isStreaming, isTyping }) {
+function MessageBubble({ role, content, isStreaming, isTyping, timestamp }) {
+  const isUser = role === 'user';
   return (
     <div className={`message-row ${role}`}>
-      <Avatar role={role} />
-      <div className={`bubble ${role === 'user' ? 'bubble-user' : 'bubble-ai'} ${isStreaming ? 'cursor' : ''}`}>
-        {isTyping ? <TypingDots /> : content}
+      {!isUser && <Avatar role={role} />}
+      <div className="bubble-wrapper">
+        <div className={`bubble ${isUser ? 'bubble-user' : 'bubble-ai'} ${isStreaming ? 'cursor' : ''}`}>
+          {isTyping ? <TypingDots /> : content}
+        </div>
+        {timestamp && !isTyping && (
+          <span className="bubble-meta">{formatTime(timestamp)}</span>
+        )}
       </div>
+      {isUser && <Avatar role={role} />}
     </div>
   );
 }
@@ -54,9 +66,15 @@ function MessageBubble({ role, content, isStreaming, isTyping }) {
 function EmptyState() {
   return (
     <div className="empty-state">
-      <div className="empty-icon">✦</div>
-      <h2>Welcome to Groq Chat</h2>
-      <p>Lightning-fast AI responses powered by Groq. Start a conversation below.</p>
+      <p className="empty-eyebrow">Groq Chat</p>
+      <h2>What's on<br />your mind?</h2>
+      <p>Ask anything. Powered by Groq's fast inference — responses stream in as they're generated.</p>
+      <div className="empty-divider" />
+      <div className="empty-hints">
+        <span className="hint-chip">Summarize a long article</span>
+        <span className="hint-chip">Debug code or explain an error</span>
+        <span className="hint-chip">Brainstorm ideas or draft text</span>
+      </div>
     </div>
   );
 }
@@ -64,14 +82,14 @@ function EmptyState() {
 function ErrorBanner({ message, onDismiss }) {
   if (!message) return null;
   return (
-    <div className="error-banner">
+    <div className="error-banner" role="alert">
       <span className="error-text">{message}</span>
       <button className="dismiss-btn" onClick={onDismiss} aria-label="Dismiss error">×</button>
     </div>
   );
 }
 
-/* ──────────────────────── main app ──────────────────────── */
+/* ── main app ── */
 
 export default function App() {
   const [conversation, setConversation] = useState(loadHistory);
@@ -85,12 +103,10 @@ export default function App() {
   const textareaRef = useRef(null);
   const abortRef = useRef(null);
 
-  /* ── persist on every conversation change ── */
   useEffect(() => {
     saveHistory(conversation);
   }, [conversation]);
 
-  /* ── auto-scroll ── */
   const scrollToBottom = useCallback(() => {
     const el = chatWindowRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -100,7 +116,6 @@ export default function App() {
     scrollToBottom();
   }, [conversation, streamingText, scrollToBottom]);
 
-  /* ── textarea auto-grow ── */
   function handleInputChange(e) {
     setInput(e.target.value);
     const ta = textareaRef.current;
@@ -110,7 +125,6 @@ export default function App() {
     }
   }
 
-  /* ── clear conversation ── */
   function handleClear() {
     if (isStreaming) return;
     setConversation([]);
@@ -119,7 +133,6 @@ export default function App() {
     saveHistory([]);
   }
 
-  /* ── send message + stream response ── */
   async function handleSend(e) {
     if (e) e.preventDefault();
 
@@ -130,8 +143,8 @@ export default function App() {
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    /* optimistic update — add user message */
-    const updatedConversation = [...conversation, { role: 'user', content: text }];
+    const userMsg = { role: 'user', content: text, ts: Date.now() };
+    const updatedConversation = [...conversation, userMsg];
     setConversation(updatedConversation);
 
     setIsTyping(true);
@@ -140,11 +153,14 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Strip ts field before sending to API
+    const apiMessages = updatedConversation.map(({ role, content }) => ({ role, content }));
+
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: updatedConversation }),
+        body: JSON.stringify({ messages: apiMessages }),
         signal: controller.signal,
       });
 
@@ -153,7 +169,6 @@ export default function App() {
         throw new Error(errBody.error || `Server error (${response.status})`);
       }
 
-      /* ── read the stream ── */
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = '';
@@ -169,16 +184,14 @@ export default function App() {
       }
 
       if (!fullText.trim()) {
-        throw new Error('Received an empty response from the AI. Please try again.');
+        throw new Error('Received an empty response. Please try again.');
       }
 
-      /* save completed reply */
-      setConversation(prev => [...prev, { role: 'assistant', content: fullText }]);
+      setConversation(prev => [...prev, { role: 'assistant', content: fullText, ts: Date.now() }]);
       setStreamingText('');
     } catch (err) {
       if (err.name !== 'AbortError') {
         setError(err.message || 'Something went wrong. Please try again.');
-        /* roll back: remove the user message we optimistically added if there's no prior assistant reply */
       }
       setStreamingText('');
     } finally {
@@ -188,7 +201,6 @@ export default function App() {
     }
   }
 
-  /* ── keyboard: Enter sends, Shift+Enter newline ── */
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -196,51 +208,47 @@ export default function App() {
     }
   }
 
-  /* ── determine if we should show the streaming bubble ── */
   const showStreamBubble = isTyping || streamingText;
 
   return (
     <div className="app">
-      {/* background orbs */}
-      <div className="bg-orbs" aria-hidden="true">
-        <div className="orb orb-1" />
-        <div className="orb orb-2" />
-        <div className="orb orb-3" />
-      </div>
-
       {/* header */}
       <header className="header">
         <div className="header-title">
-          <div className="header-logo">
-            <span className="logo-spark">⚡</span>
+          <div className="header-logo" aria-hidden="true">
+            <div className="logo-mark">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M6 1L11 6L6 11L1 6L6 1Z" fill="white" />
+              </svg>
+            </div>
           </div>
           <div>
             <h1>Groq Chat</h1>
-            <span className="header-subtitle">Lightning-fast AI</span>
           </div>
+          <span className="header-subtitle">— fast inference</span>
         </div>
         <button
           className="clear-btn"
           onClick={handleClear}
           disabled={isStreaming || conversation.length === 0}
           title="Clear conversation"
+          id="clear-chat-btn"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-            <path d="M10 11v6" />
-            <path d="M14 11v6" />
-          </svg>
-          Clear
+          New chat
         </button>
       </header>
 
       {/* chat window */}
-      <main className="chat-window" ref={chatWindowRef}>
+      <main className="chat-window" ref={chatWindowRef} id="chat-window">
         {conversation.length === 0 && !showStreamBubble && <EmptyState />}
 
         {conversation.map((msg, i) => (
-          <MessageBubble key={i} role={msg.role} content={msg.content} />
+          <MessageBubble
+            key={i}
+            role={msg.role}
+            content={msg.content}
+            timestamp={msg.ts}
+          />
         ))}
 
         {showStreamBubble && (
@@ -253,36 +261,38 @@ export default function App() {
         )}
       </main>
 
-      {/* error banner */}
+      {/* error */}
       <ErrorBanner message={error} onDismiss={() => setError('')} />
 
       {/* input */}
       <footer className="input-area">
-        <form className="chat-form" onSubmit={handleSend}>
+        <form className="chat-form" onSubmit={handleSend} id="chat-form">
           <textarea
             ref={textareaRef}
             className="message-input"
-            placeholder="Type a message..."
+            placeholder="Message..."
             rows={1}
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             disabled={isStreaming}
             autoComplete="off"
+            id="message-input"
           />
           <button
             type="submit"
             className="send-btn"
             disabled={isStreaming || !input.trim()}
             aria-label="Send message"
+            id="send-btn"
           >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
-              <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none">
+              <path d="M2 8h12M8 2l6 6-6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
         </form>
         <p className="input-hint">
-          Press <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for new line
+          Enter to send · Shift+Enter for newline
         </p>
       </footer>
     </div>
